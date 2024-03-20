@@ -1,112 +1,68 @@
 use std::collections::HashMap;
-use std::fs;
-use std::io;
-use std::path::PathBuf;
+use std::fmt::{Display, Formatter};
+use std::path::{PathBuf, Path};
+use std::io::{Result};
+use std::fs::{read_to_string};
+use std::sync::{Mutex, Arc};
 
-use lopdf::Document;
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use walkdir::WalkDir;
+use rayon::prelude::*;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Files
+pub struct File
 {
-    pub paths: Vec<PathBuf>,
-    pub files: HashMap<PathBuf, Vec<String>>,
+    path: PathBuf,
+    counts: HashMap<String, usize>,
 }
 
-impl Files
+impl Display for File
 {
-    pub fn new(root: &str) -> Self
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result
     {
-        let paths: Vec<PathBuf> = WalkDir::new(root)
-            .into_iter()
-            .par_bridge()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_type().is_file())
-            .map(|entry| entry.path().to_owned())
-            .collect();
+        Ok(write!(f, "Path: {}\n", self.path.display())?)
+    }
+}
 
-        let mut result = Files { paths, files: HashMap::new() };
+impl File
+{
+    pub fn new(path: &Path) -> Result<Self>
+    {
+        let mut file = Self::build(path)?;
+        file.count().expect("Error while counting");
 
-        let content = result.read_files().unwrap();
-        result.files = result.split_files(content).unwrap();
-
-        result
+        Ok(file)
     }
 
-    pub fn print_files(&self) -> io::Result<()>
+    fn build(path: &Path) -> Result<Self>
     {
-        let _ = self.paths
-            .iter()
-            .for_each(|entry| println!("{}", entry.display()));
+        Ok(File { path: path.to_path_buf(), counts: HashMap::new() })
+    }
+
+    fn count(&mut self) -> Result<()>
+    {
+        let counts = Arc::new(Mutex::new(HashMap::new()));
+
+        self.read().expect("Error while reading file (in count function)")
+            .par_iter()
+            .for_each(|word|
+                {
+                    let mut counts = counts.lock().unwrap();
+
+                    *counts.entry(word.to_string()).or_insert(0) += 1;
+                });
+
+        self.counts = counts.lock().expect("Error while locking `counts`").clone();
 
         Ok(())
     }
-
-    pub fn read_txt_files(&self) -> io::Result<HashMap<PathBuf, String>>
+    fn read(&self) -> Result<Vec<String>>
     {
-        let result: HashMap<PathBuf, String> = self.paths
-            .par_iter()
-            .filter(|path| path.extension().unwrap_or_default() == "txt")
-            .map(|path| -> (PathBuf, String)
-                {
-                    let content= fs::read_to_string(path).unwrap();
-
-                    (path.to_owned(), content)
-                }).collect();
-
-        Ok(result)
-    }
-
-    pub fn read_pdf_files(&self) -> io::Result<HashMap<PathBuf, String>>
-    {
-        let result: HashMap<PathBuf, String> = self.paths
-            .par_iter()
-            .filter(|path| path.extension().unwrap_or_default() == "pdf")
-            .map(|path| -> (PathBuf, String)
-                {
-                    let document = Document::load(path).unwrap();
-
-                    let content = document
-                        .get_pages()
-                        .iter()
-                        .map(|(&number, _)|
-                            {
-                                let number = number;
-                                return document.extract_text(&[number]).unwrap_or_default();
-                            }).collect();
-
-                    (path.to_owned(), content)
-                }).collect();
-
-        Ok(result)
-    }
-
-    pub fn read_files(&self) -> io::Result<HashMap<PathBuf, String>>
-    {
-        let mut files = self.read_txt_files()?;
-        files.extend(self.read_pdf_files()?);
-
-        Ok(files)
-    }
-
-    pub fn split_files(&self, files: HashMap<PathBuf, String>) -> io::Result<HashMap<PathBuf, Vec<String>>>
-    {
-        let result: HashMap<PathBuf, Vec<String>>  = files
-            .into_par_iter()
-            .map(|(path, content)|
-                (path.clone(),
-                 content.split_whitespace()
-                     .map(|item|
-                         item.chars()
-                             .filter(|symbol| symbol.is_alphabetic())
-                             .flat_map(|symbol| symbol.to_lowercase())
-                             .collect())
-                     .collect()))
+        let content: Vec<String> = read_to_string(&self.path).expect("Failed to read file")
+            .split_whitespace()
+            .map(String::from)
             .collect();
 
-        Ok(result)
+        Ok(content)
     }
 }
 
@@ -116,54 +72,13 @@ mod tests
     use super::*;
 
     #[test]
-    fn test_print() -> io::Result<()>
+    fn test_print() -> Result<()>
     {
-        let root = "Test\\";
-        let files = Files::new(root);
+        let file_path = "Test\\test.txt";
+        let path = Path::new(&file_path);
+        let file = File::new(&path)?;
 
-        files.print_files()?;
-
-        Ok(())
-    }
-    #[test]
-    fn read_txt_files() -> io::Result<()>
-    {
-        let root = "Test\\";
-        let files = Files::new(root);
-
-        files.read_txt_files()?
-            .iter()
-            .par_bridge()
-            .for_each(|(path, content)| println!("{}: {}", path.display(), content));
-
-        Ok(())
-    }
-    #[test]
-    fn read_pdf_files() -> io::Result<()>
-    {
-        let root = "Test\\";
-        let files = Files::new(root);
-
-        files.read_pdf_files()?
-            .iter()
-            .par_bridge()
-            .for_each(|(path, content)| println!("{}: {}", path.display(), content));
-
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_files() -> io::Result<()>
-    {
-        let root = "Test\\";
-        let files = Files::new(root);
-
-        files.files
-            .iter()
-            .par_bridge()
-            .for_each(|(path, content)|
-                println!("{}: {}", path.display(), content.join(" ")));
+        println!("{}", file);
 
         Ok(())
     }

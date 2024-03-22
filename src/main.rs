@@ -1,4 +1,5 @@
 mod files;
+mod search;
 
 use std::io;
 

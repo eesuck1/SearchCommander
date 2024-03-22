@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct File
+struct File
 {
     path: PathBuf,
     counts: HashMap<String, usize>,
@@ -34,6 +34,11 @@ impl File
         file.count().expect("Error while counting File");
 
         Ok(file)
+    }
+
+    fn get_count(&self, word: &str) -> &usize
+    {
+        self.counts.get(word).unwrap_or(&0)
     }
 
     fn build(path: &Path) -> Result<Self>
@@ -107,8 +112,8 @@ impl File
     }
 }
 
-#[derive(Debug)]
-struct Files
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Files
 {
     files: Vec<File>,
     dictionary: HashMap<String, usize>,
@@ -121,7 +126,6 @@ impl Display for Files
         self.files
             .iter()
             .for_each(|file| write!(f, "{}", file).expect("Failed to print Files"));
-
 
         Ok(())
     }
@@ -153,6 +157,19 @@ impl Files
             .collect();
 
         Ok(result)
+    }
+
+    pub fn count_in_dictionary(&self, word: &str) -> &usize
+    {
+        self.dictionary.get(word).unwrap_or(&0)
+    }
+
+    pub fn count_in_files(&self, prompt: &str) -> Result<Vec<(&PathBuf, &usize)>>
+    {
+        Ok(self.files
+            .par_iter()
+            .map(|file| (&file.path, file.get_count(prompt)))
+            .collect())
     }
 
     fn build() -> Result<Self>
@@ -187,6 +204,19 @@ mod tests
 
         println!("{}", files);
         println!("{:?}", files.dictionary);
+
+        Ok(())
+    }
+    #[test]
+    fn test_files_count() -> Result<()>
+    {
+        let root = "Test\\";
+        let files = Files::new(root)?;
+
+        let word = "tensor";
+        let count = files.count_in_dictionary(word);
+
+        println!("{count}");
 
         Ok(())
     }

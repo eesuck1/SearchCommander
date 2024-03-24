@@ -1,5 +1,6 @@
 mod files;
 mod search;
+mod files_cache;
 
 use std::io;
 

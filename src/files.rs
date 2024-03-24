@@ -1,17 +1,18 @@
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
-use std::fs::read_to_string;
-use std::io::Result;
+use std::fs;
+use std::io::{Read, Result};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use lopdf::Document;
 use rayon::prelude::*;
+use rmp_serde::{Deserializer, Serializer};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 struct File
 {
     path: PathBuf,
@@ -96,7 +97,7 @@ impl File
             return Ok(splitted);
         }
 
-        let content: Vec<String> = read_to_string(&self.path).expect("Failed to read file")
+        let content: Vec<String> = fs::read_to_string(&self.path).expect("Failed to read file")
             .split_whitespace()
             .filter_map(|word|
                 {
@@ -112,7 +113,7 @@ impl File
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Files
 {
     files: Vec<File>,
@@ -146,7 +147,11 @@ impl Files
 
                     if path.is_file()
                     {
-                        result.files.push(File::new(path).expect("Failed to read File"))
+                        match File::new(path)
+                        {
+                            Ok(file) => result.files.push(file),
+                            Err(error) => println!("{} occurred while opening - `{}`\nFiles skipped", error, path.display()),
+                        }
                     }
                 });
 
@@ -170,6 +175,40 @@ impl Files
             .par_iter()
             .map(|file| (&file.path, file.get_count(prompt)))
             .collect())
+    }
+
+
+    pub fn to_binary(&self, filename: &str) -> Result<()>
+    {
+        let file = fs::File::create(filename).expect("Failed to create a fs::File}");
+        let mut serializer = Serializer::new(file);
+
+        self.serialize(&mut serializer).expect("Failed to serialize Files");
+
+        Ok(())
+    }
+
+    pub fn from_binary(filename: &str) -> Result<Files>
+    {
+        match fs::File::open(filename)
+        {
+            Ok(mut file) =>
+                {
+                    let mut buffer = Vec::new();
+
+                    file.read_to_end(&mut buffer).expect("Failed to read a fs::File");
+                    let mut deserializing = Deserializer::new(&*buffer);
+
+                    Ok(Deserialize::deserialize(&mut deserializing).expect("Error while deserializing Files structure"))
+                }
+            Err(error) =>
+                {
+                    println!("{error} occurred while deserializing - `{}`\nEmpty Files structure returned", filename);
+
+                    Files::build()
+                }
+        }
+
     }
 
     fn build() -> Result<Self>
@@ -217,6 +256,22 @@ mod tests
         let count = files.count_in_dictionary(word);
 
         println!("{count}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_serialization() -> Result<()>
+    {
+        let root = "Test\\";
+        let cache = "Cache\\file_cache.bin";
+        let files = Files::new(root)?;
+
+        println!("{files}");
+
+        files.to_binary(cache)?;
+
+        println!("{}", Files::from_binary(cache)?);
 
         Ok(())
     }

@@ -2,27 +2,40 @@ use std::collections::HashMap;
 use std::io::Result;
 use std::path::PathBuf;
 
-use crate::files::Files;
+use crate::files_cache::CacheMap;
 
-pub struct Search;
+pub struct Search
+{
+    cache: CacheMap
+}
 
 impl Search
 {
-    pub fn new() -> Self
+    pub fn new(cache_path: &str, files_cache_path: &str) -> Result<Self>
     {
-        Search {}
+        Ok(Search { cache: CacheMap::new(cache_path, files_cache_path).expect("Failed to create CacheMap") })
+    }
+    
+    pub fn default() -> Result<Self>
+    {
+        const CACHE_ITSELF_PATH: &str = "Cache\\cache.bin";
+        const FILES_CACHE_FOLDER: &str = "Cache\\FilesCache";
+        
+        Self::new(CACHE_ITSELF_PATH, FILES_CACHE_FOLDER)
     }
 
-    pub fn search(&self, files: &Files, prompt: &str) -> Result<Vec<PathBuf>>
+    pub fn search(&mut self, root: PathBuf, prompt: &str) -> Result<Vec<PathBuf>>
     {
+        let files = self.cache.get_files(root).expect("Failed to create Files structure");
         let mut scores: HashMap<PathBuf, f32> = HashMap::new();
 
         prompt.split_whitespace()
             .for_each(|word|
                 {
-                    let in_dictionary = files.count_in_dictionary(word);
+                    let lower = &word.to_lowercase();
+                    let in_dictionary = files.count_in_dictionary(lower);
 
-                    files.count_in_files(word).unwrap()
+                    files.count_in_files(lower).unwrap()
                         .into_iter()
                         .for_each(|(path, count)|
                             {
@@ -43,7 +56,6 @@ impl Search
     }
 }
 
-
 #[cfg(test)]
 mod tests
 {
@@ -52,13 +64,12 @@ mod tests
     #[test]
     fn test_search() -> Result<()>
     {
-        let root = "Test\\";
-        let files = Files::new(root)?;
-        let prompt = "what is a tensor";
+        let root = PathBuf::from("Test\\");
+        let prompt = "programming";
 
-        let search = Search::new();
+        let mut search = Search::default().expect("Failed to create Search instance");
 
-        search.search(&files, prompt)?
+        search.search(root, prompt)?
             .into_iter()
             .for_each(|path| println!("{}", path.display()));
 
